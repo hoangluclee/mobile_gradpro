@@ -978,25 +978,28 @@ static Future<Map<String, dynamic>> handleJoinRequest(
   try {
     await _ensureAuth();
 
-    final action = accept ? 'approve' : 'reject';
+    final response = await dio.post(
+      "/nhom/$groupId/requests/$requestId/handle",
+      data: {
+        "action": accept ? "accept" : "deny"   // <-- ĐÚNG CHÍNH XÁC CÁI NÀY!
+      },
+    );
 
-    // THỬ 2 CÁCH – CHỌN 1 CÁI CHẠY
-    // Cách 1: Nếu baseUrl đã có /api → dùng cái này (thường gặp nhất)
-    final response = await dio.get("/nhom/$groupId/join-requests/$requestId/$action");
-
-    // Cách 2: Nếu baseUrl chưa có /api → dùng cái này
-    // final response = await dio.get("/api/nhom/$groupId/join-requests/$requestId/$action");
+    debugPrint("DUYỆT THÀNH CÔNG: ${response.statusCode}");
 
     return {
       "success": true,
       "message": accept ? "Đã chấp nhận thành viên!" : "Đã từ chối yêu cầu"
     };
-  } catch (e) {
-    debugPrint("Lỗi duyệt yêu cầu: $e");
+  } on DioException catch (e) {
+    debugPrint("Lỗi duyệt: ${e.response?.statusCode} - ${e.response?.data}");
     return {
       "success": false,
-      "message": "Không thể thực hiện. Vui lòng thử lại!"
+      "message": e.response?.data?['message'] ?? "Không thể thực hiện"
     };
+  } catch (e) {
+    debugPrint("Lỗi: $e");
+    return {"success": false, "message": "Lỗi không xác định"};
   }
 }
 
