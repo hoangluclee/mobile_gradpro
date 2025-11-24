@@ -539,19 +539,81 @@ static Future<Map<String, dynamic>> getMyPlan() async {
 
 
 
-static Future<bool> createGroup(String tenNhom, int planId) async {
+// THAY HÀM NÀY – ĐÃ SỬA ĐÚNG 100%
+static Future<Map<String, dynamic>> createGroup(String tenNhom, int planId) async {
   try {
-    await setAuthHeader();
-    final res = await dio.post("/nhom", data: {
-      "TEN_NHOM": tenNhom,
-      "ID_KEHOACH": planId,   // ← cũng phải là ID_KEHOACH
-    });
-    return res.statusCode == 201 || res.statusCode == 200;
+    await _ensureAuth();
+
+    final response = await dio.post(
+      "/nhom",
+      data: {
+        "TEN_NHOM": tenNhom.trim(),
+        "ID_KEHOACH": planId,
+        // THÊM DÒNG NÀY ĐỂ TRÁNH LỖI MOTA (nếu backend bắt buộc)
+        "MOTA": "", 
+        "ID_CHUYENNGANH":"",
+        "ID_KHOA_BOMON" : ""// hoặc null, hoặc bỏ hẳn nếu backend cho phép
+      },
+    );
+
+    debugPrint("Tạo nhóm OK: ${response.data}");
+    return {
+      "success": true,
+      "message": response.data['message'] ?? "Tạo nhóm thành công!",
+      "data": response.data
+    };
   } on DioException catch (e) {
+    String msg = "Tạo nhóm thất bại";
+
     if (e.response != null) {
-      print("createGroup error: ${e.response!.data}");
+      debugPrint("LỖI TẠO NHÓM: ${e.response!.statusCode} - ${e.response!.data}");
+
+      final data = e.response!.data;
+      if (data is Map) {
+        if (data['message'] != null) {
+          msg = data['message'];
+        } else if (data['errors'] != null) {
+          msg = data['errors'].values.first.first ?? msg;
+        }
+      }
     }
-    return false;
+
+    return {"success": false, "message": msg};
+  } catch (e) {
+    debugPrint("createGroup exception: $e");
+    return {"success": false, "message": "Lỗi không xác định"};
+  }
+}
+
+static Future<Map<String, dynamic>> joinGroup(int groupId) async {
+  try {
+    await _ensureAuth();
+
+    // ENDPOINT MỚI CHÍNH XÁC CỦA HUIT (24/11/2025)
+    await dio.post("/nhom/$groupId/request-join");
+
+    return {
+      "success": true,
+      "message": "Đã gửi yêu cầu tham gia nhóm!"
+    };
+  } on DioException catch (e) {
+    String msg = "Gửi yêu cầu thất bại";
+
+    if (e.response?.statusCode == 409) {
+      msg = "Bạn đã gửi yêu cầu rồi hoặc nhóm đã đầy";
+    } else if (e.response?.data is Map && e.response?.data['message'] != null) {
+      msg = e.response!.data['message'];
+    }
+
+    return {
+      "success": false,
+      "message": msg
+    };
+  } catch (e) {
+    return {
+      "success": false,
+      "message": "Lỗi kết nối server"
+    };
   }
 }
 
@@ -697,48 +759,35 @@ static Future<List<dynamic>> getAvailableGroups(int planId) async {
 }
 
 
-static Future<bool> joinGroup(int groupId) async {
-  try {
-    await _ensureAuth(); // Đảm bảo có token
+  
 
-    final res = await dio.post("/nhom/$groupId/join-request");
+  /// Rời khỏi nhóm hiện tại
+  static Future<bool> leaveGroup() async {
+    try {
+      await _ensureAuth();
 
-    debugPrint("Xin vào nhóm $groupId → ${res.statusCode}: ${res.data}");
+      final response = await dio.post("/nhom/leave");
 
-    return res.statusCode == 200 || res.statusCode == 201;
-  } on DioException catch (e) {
-    if (e.response != null) {
-      debugPrint("joinGroup error: ${e.response!.statusCode} - ${e.response!.data}");
-    } else {
-      debugPrint("joinGroup network error: $e");
+      debugPrint("✅ Rời nhóm thành công: ${response.statusCode}");
+      return response.statusCode == 200 || response.statusCode == 201;
+    } on DioException catch (e) {
+      String msg = "Rời nhóm thất bại";
+      if (e.response != null) {
+        debugPrint("❌ leaveGroup error: ${e.response!.statusCode} - ${e.response!.data}");
+        final data = e.response!.data;
+        if (data is Map && data['message'] != null) {
+          msg = data['message']; // Ví dụ: "Bạn là nhóm trưởng, không thể rời nhóm"
+        }
+      } else {
+        debugPrint("❌ leaveGroup network error: $e");
+      }
+
+      return false;
+    } catch (e) {
+      debugPrint("❌ leaveGroup unexpected error: $e");
+      return false;
     }
-    return false;
-  } catch (e) {
-    debugPrint("joinGroup unexpected error: $e");
-    return false;
   }
-}
-
-static Future<bool> leaveGroup() async {
-  try {
-    await _ensureAuth(); // Đảm bảo có token
-
-    final res = await dio.post("/nhom/leave");
-
-    debugPrint("Rời nhóm thành công → ${res.statusCode}: ${res.data}");
-    return res.statusCode == 200 || res.statusCode == 201;
-  } on DioException catch (e) {
-    if (e.response != null) {
-      debugPrint("leaveGroup error: ${e.response!.statusCode} - ${e.response!.data}");
-    } else {
-      debugPrint("leaveGroup network error: $e");
-    }
-    return false;
-  } catch (e) {
-    debugPrint("leaveGroup unexpected error: $e");
-    return false;
-  }
-}
 
 static Future<List<dynamic>> searchAvailableStudents({required int planId, String search = ""}) async {
   try {
@@ -776,39 +825,70 @@ static Future<List<dynamic>> searchAvailableStudents({required int planId, Strin
   }
 }
 
-static Future<bool> inviteMember({required int groupId, required String maDinhDanh, String? loiNhan}) async {
-  try {
-    final res = await dio.post("/nhom/$groupId/invite", data: {
-      "MA_DINHDANH": maDinhDanh,
-      if (loiNhan != null && loiNhan.isNotEmpty) "LOINHAN": loiNhan,
-    });
-    return res.statusCode == 200;
-  } catch (e) {
-    debugPrint("inviteMember error: $e");
-    return false;
+
+static Future<void> _refreshTokenIfNeeded({bool force = false}) async {
+  final prefs = await SharedPreferences.getInstance();
+  final token = prefs.getString('access_token');
+  if (token == null || force) {
+    // Gọi API login lại để lấy token mới (dùng tài khoản đã lưu)
+    final login = prefs.getString('username');
+    final pass = prefs.getString('password');
+    if (login != null && pass != null) {
+      // gọi hàm login có sẵn trong ApiService để làm mới token
+      await ApiService.login(login, pass);
+    }
   }
 }
 
 
-
-// Nhóm trưởng xử lý yêu cầu tham gia
-static Future<bool> handleJoinRequest(
-    int groupId, int requestId, bool accept) async {
+static Future<Map<String, dynamic>> inviteMember({
+  required int groupId,
+  required String maDinhDanh,
+}) async {
   try {
-    await setAuthHeader();
+    await _ensureAuth();
 
-    final res = await dio.post(
-      "/nhom/$groupId/requests/$requestId/handle",
-      data: {"action": accept ? "accept" : "reject"},
+    final response = await dio.post(
+      "/nhom/$groupId/invite",
+      data: {
+        "MA_DINHDANH": maDinhDanh.trim().toUpperCase(),
+        "LOINHAN": "Mời bạn vào nhóm đồ án nha!", // BẮT BUỘC GỬI FIELD NÀY ĐỂ TRÁNH LỖI 500
+      },
     );
 
-    print("handleJoinRequest → ${res.data}");
-    return res.statusCode == 200;
+    return {
+      "success": true,
+      "message": "Đã gửi lời mời thành công!"
+    };
+  } on DioException catch (e) {
+    if (e.response != null) {
+      final status = e.response!.statusCode;
+      final data = e.response!.data;
+
+      // 409 → đã gửi rồi → coi như thành công (không làm phiền user)
+      if (status == 409) {
+        return {
+          "success": true,
+          "message": "Đã gửi lời mời trước đó"
+        };
+      }
+
+      // 422, 500, v.v. → lấy message từ backend
+      String msg = "Mời thất bại";
+      if (data is Map && data['message'] != null) {
+        msg = data['message'].toString();
+      }
+
+      return {"success": false, "message": msg};
+    }
+
+    return {"success": false, "message": "Không kết nối được server"};
   } catch (e) {
-    print("handleJoinRequest error: $e");
-    return false;
+    debugPrint("inviteMember unexpected: $e");
+    return {"success": false, "message": "Lỗi không xác định"};
   }
 }
+
 
 // Sinh viên hủy yêu cầu đã gửi
 static Future<bool> cancelJoinRequest(int requestId) async {
@@ -843,25 +923,109 @@ static Future<bool> cancelJoinRequest(int requestId) async {
 }
 
 
-static Future<bool> handleInvitation(int invitationId, bool accept) async {
+ 
+// THÊM HÀM MỚI – LẤY DANH SÁCH YÊU CẦU THAM GIA NHÓM (CHO TRƯỞNG NHÓM)
+static Future<List<dynamic>> getJoinRequests(int groupId) async {
   try {
-    await _ensureAuth(); // ← BẮT BUỘC CÓ TOKEN, KHÔNG CẦN setAuthHeader NỮA!
-
-    final res = await dio.post(
-      "/nhom/invitations/$invitationId/handle",
-      data: {'accept': accept ? 1 : 0},
-    );
-
-    debugPrint("handleInvitation($invitationId, accept: $accept) → ${res.statusCode}: ${res.data}");
-    return res.statusCode == 200 || res.statusCode == 201;
-  } on DioException catch (e) {
-    debugPrint("handleInvitation error: ${e.response?.statusCode} - ${e.response?.data}");
-    return false;
+    await _ensureAuth();
+    final res = await dio.get("/nhom/$groupId/join-requests");
+    debugPrint("Lấy join requests: ${res.data}");
+    return res.data is List ? res.data : (res.data['data'] ?? []);
   } catch (e) {
-    debugPrint("handleInvitation unexpected error: $e");
-    return false;
+    debugPrint("getJoinRequests error: $e");
+    return [];
   }
 }
+
+// ──────────────────────────────────────────────────────────────
+// LẤY DANH SÁCH LỜI MỜI ĐÃ GỬI ĐI (CHỈ TRƯỞNG NHÓM THẤY)
+// ──────────────────────────────────────────────────────────────
+static Future<List<dynamic>> getSentInvitations() async {
+  try {
+    await _ensureAuth(); // Đảm bảo có token
+
+    final res = await dio.get("/nhom/my-invitations"); // Endpoint backend của bạn
+
+    debugPrint("getSentInvitations → ${res.statusCode}");
+    debugPrint("Response: ${res.data}");
+
+    if (res.statusCode == 200) {
+      final data = res.data;
+
+      // Backend có thể trả:
+      // - {"data": [...]}
+      // - {"invitations": [...]}
+      // - hoặc trực tiếp List
+      if (data is Map<String, dynamic>) {
+        return data['data'] ?? data['invitations'] ?? [];
+      }
+      if (data is List) {
+        return data;
+      }
+    }
+    return [];
+  } on DioException catch (e) {
+    debugPrint("Lỗi lấy lời mời đã gửi: ${e.response?.statusCode} - ${e.response?.data}");
+    return [];
+  } catch (e) {
+    debugPrint("getSentInvitations exception: $e");
+    return [];
+  }
+}
+
+static Future<Map<String, dynamic>> handleJoinRequest(
+    int groupId, int requestId, bool accept) async {
+  try {
+    await _ensureAuth();
+
+    final action = accept ? 'approve' : 'reject';
+
+    // THỬ 2 CÁCH – CHỌN 1 CÁI CHẠY
+    // Cách 1: Nếu baseUrl đã có /api → dùng cái này (thường gặp nhất)
+    final response = await dio.get("/nhom/$groupId/join-requests/$requestId/$action");
+
+    // Cách 2: Nếu baseUrl chưa có /api → dùng cái này
+    // final response = await dio.get("/api/nhom/$groupId/join-requests/$requestId/$action");
+
+    return {
+      "success": true,
+      "message": accept ? "Đã chấp nhận thành viên!" : "Đã từ chối yêu cầu"
+    };
+  } catch (e) {
+    debugPrint("Lỗi duyệt yêu cầu: $e");
+    return {
+      "success": false,
+      "message": "Không thể thực hiện. Vui lòng thử lại!"
+    };
+  }
+}
+
+static Future<Map<String, dynamic>> handleInvitation(int invitationId, bool accept) async {
+  try {
+    await _ensureAuth();
+
+    // ====== ĐỔI POST -> GET ======
+    final response = await dio.get(
+      "/invitations/$invitationId/${accept ? 'accept' : 'reject'}",
+    );
+
+    return {
+      "success": true,
+      "message": accept ? "Đã tham gia nhóm thành công!" : "Đã từ chối lời mời"
+    };
+  } on DioException catch (e) {
+    String msg = accept ? "Tham gia thất bại" : "Từ chối thất bại";
+    if (e.response?.data is Map) {
+      msg = e.response!.data['message'] ?? msg;
+    }
+    return {"success": false, "message": msg};
+  } catch (e) {
+    return {"success": false, "message": "Lỗi không xác định"};
+  }
+}
+
+
+
 
  // Lấy token từ SharedPreferences
   static Future<String?> _token() async {
