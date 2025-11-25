@@ -1,4 +1,3 @@
-// lib/screens/student/topics_combined_page.dart
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 import 'topic_detail_page.dart';

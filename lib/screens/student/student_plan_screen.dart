@@ -1,3 +1,4 @@
+// lib/screens/student/student_plan_screen.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../services/api_service.dart';
@@ -23,7 +24,7 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
     try {
       final res = await ApiService.getKeHoachList();
       setState(() {
-        plans = res;
+        plans = res is List ? res : [];
         isLoading = false;
       });
     } catch (e) {
@@ -32,7 +33,6 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
     }
   }
 
-  // ---- Format ngày dd/MM/yyyy ----
   String _formatDate(String? date) {
     if (date == null || date.isEmpty) return "Chưa xác định";
     try {
@@ -69,8 +69,7 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: plans.length,
-                    itemBuilder: (context, index) =>
-                        _buildPlanCard(context, plans[index]),
+                    itemBuilder: (context, index) => _buildPlanCard(context, plans[index]),
                   ),
                 ),
     );
@@ -78,10 +77,36 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
 
   Widget _buildPlanCard(BuildContext context, Map<String, dynamic> plan) {
     final title = plan['TEN_DOT'] ?? 'Không rõ tên đợt';
-    final start = _formatDate(plan['NGAY_BATDAU']);
-    final end = _formatDate(plan['NGAY_KETHUC']);
+    final startStr = plan['NGAY_BATDAU'];
+    final endStr = plan['NGAY_KETHUC'];
     final status = plan['TRANGTHAI'] ?? 'Chưa xác định';
     final khoaHoc = plan['KHOAHOC'] ?? '—';
+
+    // Tính toán thời gian
+    final DateTime? startDate = startStr != null ? DateTime.tryParse(startStr) : null;
+    final DateTime? endDate = endStr != null ? DateTime.tryParse(endStr) : null;
+    final DateTime now = DateTime.now();
+
+    double progress = 0.0;
+    String timeText = "Chưa có thời gian";
+
+    if (startDate != null && endDate != null) {
+      if (now.isBefore(startDate)) {
+        progress = 0.0;
+        final daysLeft = startDate.difference(now).inDays;
+        timeText = daysLeft == 0 ? "Bắt đầu hôm nay" : "Còn $daysLeft ngày nữa";
+      } else if (now.isAfter(endDate)) {
+        progress = 1.0;
+        timeText = "Đã kết thúc";
+      } else {
+        final total = endDate.difference(startDate).inMilliseconds;
+        final passed = now.difference(startDate).inMilliseconds;
+        progress = passed / total;
+        final daysPassed = now.difference(startDate).inDays;
+        final totalDays = endDate.difference(startDate).inDays;
+        timeText = "Đã qua $daysPassed/$totalDays ngày";
+      }
+    }
 
     Color statusColor = Colors.orange;
     if (status.toLowerCase().contains("thực hiện")) statusColor = Colors.green;
@@ -123,8 +148,7 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
                       color: Colors.deepPurple.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.calendar_today,
-                        color: Colors.deepPurple),
+                    child: const Icon(Icons.calendar_today, color: Colors.deepPurple),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -137,38 +161,62 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
                       ),
                     ),
                   ),
-                  const Icon(Icons.arrow_forward_ios_rounded,
-                      color: Colors.deepPurple, size: 18),
+                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.deepPurple, size: 18),
                 ],
               ),
 
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
               Row(
                 children: [
                   const Icon(Icons.access_time, size: 16, color: Colors.grey),
                   const SizedBox(width: 6),
                   Text(
-                    "$start → $end",
+                    "${_formatDate(startStr)} → ${_formatDate(endStr)}",
                     style: const TextStyle(color: Colors.black87),
                   ),
                 ],
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
+
+              // CÂY THỜI GIAN ĐÃ QUA (ĐỎ) - CÒN LẠI (XANH)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    timeText,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: progress >= 1.0 ? Colors.red.shade700 : Colors.green.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      backgroundColor: Colors.grey.shade300,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        progress >= 1.0 ? Colors.red : Colors.green,
+                      ),
+                      minHeight: 10,
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
 
               Text(
                 "Trạng thái: $status",
-                style: TextStyle(
-                  color: statusColor,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: TextStyle(color: statusColor, fontWeight: FontWeight.w600),
               ),
 
               const SizedBox(height: 6),
 
-              Text("Khóa học: $khoaHoc",
-                  style: const TextStyle(color: Colors.black87)),
+              Text("Khóa học: $khoaHoc", style: const TextStyle(color: Colors.black87)),
             ],
           ),
         ),
@@ -177,6 +225,7 @@ class _StudentPlanScreenState extends State<StudentPlanScreen> {
   }
 }
 
+// GIỮ NGUYÊN TRANG DETAIL CỦA BẠN – KHÔNG ĐỘNG VÀO
 class StudentPlanDetailScreen extends StatelessWidget {
   final Map<String, dynamic> plan;
   const StudentPlanDetailScreen({super.key, required this.plan});
@@ -245,16 +294,9 @@ class StudentPlanDetailScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 15)),
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                 const SizedBox(height: 4),
-                Text(value,
-                    style: const TextStyle(
-                        color: Colors.black87,
-                        fontSize: 14,
-                        height: 1.4,
-                        fontWeight: FontWeight.w400)),
+                Text(value, style: const TextStyle(color: Colors.black87, fontSize: 14, height: 1.4, fontWeight: FontWeight.w400)),
               ],
             ),
           ),
