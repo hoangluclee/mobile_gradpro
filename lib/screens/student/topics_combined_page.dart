@@ -14,8 +14,23 @@ class TopicRegisterScreen extends StatefulWidget {
 class _TopicRegisterScreenState extends State<TopicRegisterScreen> {
   bool loading = true;
   List topics = [];
-  Map<String, dynamic>? myGroupData;
+  Map<String, dynamic>? myGroup;
   Map<String, dynamic>? myRegisteredTopic;
+  Map<String, dynamic>? currentUser; // Lấy từ ApiService hoặc Provider
+
+  // DÙNG CHÍNH XÁC HÀM CỦA BẠN
+  bool get isLeader {
+    if (myGroup == null || myGroup?['has_group'] != true) return false;
+    final group = _safeMap(myGroup?['group_data']);
+    final leaderId = _toInt(group['ID_NHOMTRUONG']);
+    if (leaderId == null) return false;
+    final currentUserId = _toInt(currentUser?['ID_NGUOIDUNG']) ?? _toInt(currentUser?['ID_SINHVIEN']);
+    return leaderId == currentUserId;
+  }
+
+  // Helper functions (giống hệ thống bạn đang dùng)
+  Map<String, dynamic> _safeMap(dynamic data) => data is Map<String, dynamic> ? data : {};
+  int? _toInt(dynamic value) => value is int ? value : (value is String ? int.tryParse(value) : null);
 
   @override
   void initState() {
@@ -24,135 +39,182 @@ class _TopicRegisterScreenState extends State<TopicRegisterScreen> {
   }
 
   Future<void> loadData() async {
-    setState(() => loading = true);
-    try {
-      final results = await Future.wait([
-        ApiService.getTopics(widget.planId),
-        ApiService.getMyGroup(),
-      ]);
+  setState(() => loading = true);
+  try {
+    // Gọi riêng → không lỗi Object
+    final rawTopics = await ApiService.getTopics(widget.planId);
+    final groupResult = await ApiService.getMyGroup();
+    final userResult = await ApiService.getCurrentUser();
 
-      final rawTopics = results[0];
-      final groupResult = results[1];
+    currentUser = userResult as Map<String, dynamic>?;
 
-      Map<String, dynamic>? topic = null;
-      Map<String, dynamic>? groupData = null;
+    Map<String, dynamic>? topic = null;
+    Map<String, dynamic>? groupData = null;
 
-      if (groupResult is Map<String, dynamic> && groupResult['has_group'] == true) {
-        groupData = groupResult;
-        final group = groupResult['group_data'];
+    if (groupResult is Map<String, dynamic> && groupResult['has_group'] == true) {
+      groupData = groupResult;
+      final group = groupResult['group_data'] as Map<String, dynamic>?;
+      if (group != null) {
         final phancong = group['phancong_detai_nhom'] as Map<String, dynamic>?;
         topic = phancong?['detai'] as Map<String, dynamic>?;
       }
+    }
 
-      if (mounted) {
-        setState(() {
-          topics = (rawTopics is List) ? List<dynamic>.from(rawTopics) : <dynamic>[];
-          myGroupData = groupData;
-          myRegisteredTopic = topic;
-          loading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Load error: $e");
-      if (mounted) setState(() => loading = false);
+    if (mounted) {
+      setState(() {
+        topics = List<dynamic>.from(rawTopics is List ? rawTopics : []);
+        myGroup = groupData;
+        myRegisteredTopic = topic;
+        loading = false;
+      });
+    }
+  } catch (e) {
+    debugPrint("Load error: $e");
+    if (mounted) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Lỗi: $e"), backgroundColor: Colors.red),
+      );
     }
   }
+}
 
   Future<void> registerTopic(int topicId) async {
-    if (myGroupData == null) {
+    // DÙNG CHÍNH XÁC HÀM isLeader CỦA BẠN
+    if (!isLeader) {
+      _showMessage("Chỉ nhóm trưởng mới được phép đăng ký đề tài!", color: const Color(0xFFEF6C00));
+      return;
+    }
+
+    if (myGroup == null) {
       _showMessage("Bạn chưa có nhóm để đăng ký!");
       return;
     }
 
     try {
       final res = await ApiService.registerTopic(topicId);
-      if (res["message"]?.toString().contains("thành công") == true) {
-        _showMessage("Đăng ký thành công!", isSuccess: true);
+      final success = res["success"] == true || (res["message"]?.toString().contains("thành công") == true);
+
+      _showMessage(
+        res["message"] ?? (success ? "Đăng ký thành công!" : "Không thể đăng ký"),
+        color: success ? Colors.green : const Color(0xFFC62828),
+      );
+
+      if (success) {
         await Future.delayed(const Duration(milliseconds: 500));
         if (mounted) {
           await Navigator.push(context, MaterialPageRoute(builder: (_) => TopicDetailPage(topicId: topicId)));
           loadData();
         }
-      } else {
-        _showMessage(res["message"] ?? "Không thể đăng ký");
       }
     } catch (e) {
-      _showMessage("Lỗi: $e");
+      _showMessage("Lỗi kết nối: $e");
     }
   }
 
-  void _showMessage(String msg, {bool isSuccess = false}) {
+  void _showMessage(String msg, {Color color = Colors.red}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: isSuccess ? Colors.green : Colors.red),
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xfff4f6fb),
+      backgroundColor: const Color(0xFFF4F6FB),
       appBar: AppBar(
         centerTitle: true,
         title: const Text("Danh sách đề tài", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(colors: [Color(0xff6a5af9), Color(0xff836fff)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            gradient: LinearGradient(colors: [Color(0xFF6A5AF9), Color(0xFF836FFF)], begin: Alignment.topLeft, end: Alignment.bottomRight),
           ),
         ),
       ),
       body: loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF6A5AF9)))
           : RefreshIndicator(
               onRefresh: loadData,
+              color: const Color(0xFF6A5AF9),
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  // CARD ĐỀ TÀI CỦA NHÓM TÔI – NHỎ GỌN, ĐẸP, KHÔNG ICON
+                  // ĐỀ TÀI CỦA NHÓM MÌNH
                   if (myRegisteredTopic != null) ...[
                     _buildMyTopicCard(),
                     const SizedBox(height: 16),
                   ],
 
-                  // Danh sách đề tài
+                  // THÔNG BÁO NẾU KHÔNG PHẢI NHÓM TRƯỞNG
+                  if (myGroup != null && !isLeader && myRegisteredTopic == null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF3E0),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFEF6C00)),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Color(0xFFEF6C00)),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              "Chỉ nhóm trưởng mới được phép đăng ký đề tài.",
+                              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEF6C00), fontSize: 15),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // DANH SÁCH ĐỀ TÀI
                   ...topics.map((t) => _buildTopicCard(t)).toList(),
 
                   if (topics.isEmpty)
-                    const Center(child: Padding(padding: EdgeInsets.all(40), child: Text("Không có đề tài nào"))),
+                    const Center(child: Padding(padding: EdgeInsets.all(60), child: Text("Không có đề tài nào", style: TextStyle(fontSize: 16, color: Colors.grey)))),
                 ],
               ),
             ),
     );
   }
 
-  // CARD ĐỀ TÀI CỦA NHÓM MÌNH – NHỎ GỌN, SẠCH SẼ
   Widget _buildMyTopicCard() {
     final topic = myRegisteredTopic!;
-    final groupName = myGroupData?['group_data']?['TEN_NHOM'] ?? 'Nhóm chưa đặt tên';
+    final groupName = myGroup?['group_data']?['TEN_NHOM'] ?? 'Nhóm chưa đặt tên';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(colors: [Color(0xFF6A11CB), Color(0xFF2575FC)]),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.deepPurple.withOpacity(0.4), blurRadius: 12, offset: const Offset(0, 6))],
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.deepPurple.withOpacity(0.4), blurRadius: 15, offset: const Offset(0, 8))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("ĐỀ TÀI CỦA NHÓM ", style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 10),
-          Text(topic['TEN_DETAI'] ?? 'Chưa có tên', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 6),
-          Text("Nhóm: $groupName", style: const TextStyle(color: Colors.white70, fontSize: 14)),
-          Text("Mã: ${topic['MA_DETAI'] ?? '—'}", style: const TextStyle(color: Colors.white70, fontSize: 14)),
+          const Text("ĐỀ TÀI CỦA NHÓM:", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
+          Text(topic['TEN_DETAI'] ?? 'Chưa có tên', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 8),
+          Text("Nhóm: $groupName", style: const TextStyle(color: Colors.white70, fontSize: 15)),
+          Text("Mã: ${topic['MA_DETAI'] ?? '—'}", style: const TextStyle(color: Colors.white70, fontSize: 15)),
+          const SizedBox(height: 16),
           Align(
             alignment: Alignment.centerRight,
-            child: ElevatedButton(
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.visibility, size: 20),
+              label: const Text("Xem chi tiết", style: TextStyle(fontWeight: FontWeight.bold)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TopicDetailPage(topicId: topic['ID_DETAI']))),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.deepPurple, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
-              child: const Text("Xem chi tiết", style: TextStyle(fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.deepPurple, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30))),
             ),
           ),
         ],
@@ -160,159 +222,149 @@ class _TopicRegisterScreenState extends State<TopicRegisterScreen> {
     );
   }
 
-  // CARD ĐỀ TÀI SIÊU ĐẸP – HIỂN THỊ ĐẦY ĐỦ THÔNG TIN
-Widget _buildTopicCard(Map<String, dynamic> t) {
-  final bool isRegistered = t["IS_REGISTERED"] == true;
-  final bool isFull = (t["SO_NHOM_HIENTAI"] ?? 0) >= (t["SO_NHOM_TOIDA"] ?? 1);
-  final List<dynamic>? registeredGroups = t['nhom_dangky'] ?? t['nhom_da_dangky'];
+  Widget _buildTopicCard(Map<String, dynamic> t) {
+    final bool isRegistered = t["IS_REGISTERED"] == true;
+    final bool isFull = (t["SO_NHOM_HIENTAI"] ?? 0) >= (t["SO_NHOM_TOIDA"] ?? 1);
+    final List<dynamic>? registeredGroups = t['nhom_dangky'] ?? t['nhom_da_dangky'];
 
+    final String chuyenNganh = t['TEN_CHUYENNGANH'] ?? t['chuyennganh']?['TEN_CHUYENNGANH'] ?? "Không xác định";
+    final String moTa = (t['MOTA']?.toString() ?? "").trim();
+    final String shortDesc = moTa.isEmpty ? "Không có mô tả" : (moTa.length > 120 ? "${moTa.substring(0, 120)}..." : moTa);
 
-  // CHUYÊN NGÀNH
-  final String chuyenNganh = t['TEN_CHUYENNGANH'] ??
-      t['chuyennganh']?['TEN_CHUYENNGANH'] ??
-      "Không xác định";
-
-  // MÔ TẢ NGẮN
-  final String moTa = (t['MOTA']?.toString() ?? "").trim();
-  final String shortDesc = moTa.isEmpty
-      ? "Không có mô tả"
-      : (moTa.length > 100 ? "${moTa.substring(0, 100)}..." : moTa);
-
-  return Card(
-    margin: const EdgeInsets.only(bottom: 16),
-    elevation: 8,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: () async {
-        await Navigator.push(context, MaterialPageRoute(builder: (_) => TopicDetailPage(topicId: t["ID_DETAI"])));
-        loadData();
-      },
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // TIÊU ĐỀ + BADGE TRẠNG THÁI
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    t["TEN_DETAI"] ?? "Không có tên",
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: 10,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () async {
+          await Navigator.push(context, MaterialPageRoute(builder: (_) => TopicDetailPage(topicId: t["ID_DETAI"])));
+          loadData();
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      t["TEN_DETAI"] ?? "Không có tên",
+                      style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: Colors.black87),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    if (isFull) _statusChip("ĐÃ ĐỦ", Colors.red),
-                    if (isRegistered) _statusChip("ĐÃ ĐĂNG KÝ", Colors.deepPurple),
-                    if (!isFull && !isRegistered) _statusChip("${t["SO_NHOM_HIENTAI"] ?? 0}/${t["SO_NHOM_TOIDA"] ?? 1}", Colors.orange),
-                  ],
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // MÔ TẢ NGẮN
-            Text(
-              shortDesc,
-              style: TextStyle(fontSize: 14, color: Colors.grey[700], height: 1.5),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-
-            const SizedBox(height: 16),
-
-            // THÔNG TIN CHI TIẾT
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(width: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      const SizedBox(height: 8),
-                      _infoRow(Icons.school, "Chuyên ngành", chuyenNganh),
+                      if (isFull) _statusChip("ĐÃ ĐỦ", const Color(0xFFC62828)),
+                      if (isRegistered) _statusChip("ĐÃ ĐĂNG KÝ", Colors.deepPurple),
+                      if (!isFull && !isRegistered)
+                        _statusChip("${t["SO_NHOM_HIENTAI"] ?? 0}/${t["SO_NHOM_TOIDA"] ?? 1}", const Color(0xFFEF6C00)),
                     ],
                   ),
-                ),
-                const SizedBox(width: 16),
-                // NÚT ĐĂNG KÝ
-                SizedBox(
-                  width: 130,
-                  child: ElevatedButton(
-                    onPressed: isFull || isRegistered ? null : () => registerTopic(t["ID_DETAI"]),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isFull || isRegistered ? Colors.grey[400] : const Color(0xFF6A5AF9),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      elevation: isFull || isRegistered ? 0 : 6,
-                    ),
-                    child: Text(
-                      isRegistered ? "ĐÃ ĐĂNG KÝ" : isFull ? "ĐÃ ĐỦ" : "ĐĂNG KÝ",
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(shortDesc, style: TextStyle(fontSize: 14.5, color: Colors.grey[700], height: 1.5), maxLines: 3, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _infoRow(Icons.school, "Chuyên ngành", chuyenNganh),
+                        const SizedBox(height: 6),
+                        _infoRow(Icons.person, "GVHD", t["ten_giang_vien"] ?? "Chưa có"),
+                      ],
                     ),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 140,
+                    child: ElevatedButton(
+                      onPressed: (isFull || isRegistered || !isLeader)
+                          ? null
+                          : () => registerTopic(t["ID_DETAI"]),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: (isFull || isRegistered || !isLeader)
+                            ? Colors.grey[400]
+                            : const Color(0xFF6A5AF9),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                        elevation: (isFull || isRegistered || !isLeader) ? 0 : 8,
+                      ),
+                      child: Text(
+                        isRegistered
+                            ? "ĐÃ ĐĂNG KÝ"
+                            : isFull
+                                ? "ĐÃ ĐỦ"
+                                : !isLeader
+                                    ? "CHỈ NHÓM TRƯỞNG"
+                                    : "ĐĂNG KÝ",
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
 
-            // NHÓM ĐÃ ĐĂNG KÝ (NẾU CÓ)
-            if ((registeredGroups?.isNotEmpty ?? false) || (isRegistered && myGroupData != null))
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
+              if ((registeredGroups?.isNotEmpty ?? false) || (isRegistered && myGroup != null))
+                Container(
+                  margin: const EdgeInsets.only(top: 16),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: Colors.deepPurple.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.deepPurple.withOpacity(0.3)),
+                    color: Colors.deepPurple.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.deepPurple.withOpacity(0.4)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.group, color: Colors.deepPurple, size: 20),
-                      const SizedBox(width: 8),
+                      const Icon(Icons.group, color: Colors.deepPurple, size: 22),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          "Đã đăng ký: ${(registeredGroups ?? []).map((g) => g['TEN_NHOM'] ?? 'Nhóm').join(', ')}${isRegistered && myGroupData != null ? (registeredGroups?.isNotEmpty ?? false) ? ', ${myGroupData!['group_data']?['TEN_NHOM']}' : myGroupData!['group_data']?['TEN_NHOM'] : '' : ''}",
-                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.deepPurple),
+                          "Đã đăng ký: ${(registeredGroups ?? []).map((g) => g['TEN_NHOM'] ?? 'Nhóm').join(', ')}${isRegistered && myGroup != null ? (registeredGroups?.isNotEmpty ?? false) ? ', ${myGroup!['group_data']?['TEN_NHOM']}' : myGroup!['group_data']?['TEN_NHOM'] : '' : ''}",
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.deepPurple),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-// HÀM HỖ TRỢ
-Widget _infoRow(IconData icon, String label, String value) {
-  return Row(
-    children: [
-      Icon(icon, size: 18, color: Colors.deepPurple),
-      const SizedBox(width: 8),
-      Text("$label: ", style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.black87)),
-      Expanded(child: Text(value, style: const TextStyle(fontSize: 13.5, color: Colors.black87), overflow: TextOverflow.ellipsis)),
-    ],
-  );
-}
+  Widget _infoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 19, color: const Color(0xFF6A5AF9)),
+        const SizedBox(width: 8),
+        Text("$label: ", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        Expanded(child: Text(value, style: const TextStyle(fontSize: 14), overflow: TextOverflow.ellipsis)),
+      ],
+    );
+  }
 
-Widget _statusChip(String text, Color color) {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-    decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withOpacity(0.5))),
-    child: Text(text, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
-  );
-}
+  Widget _statusChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.6)),
+      ),
+      child: Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+    );
+  }
 }
