@@ -768,23 +768,23 @@ static Future<List<dynamic>> getAvailableGroups(int planId) async {
 
       final response = await dio.post("/nhom/leave");
 
-      debugPrint("✅ Rời nhóm thành công: ${response.statusCode}");
+      debugPrint(" Rời nhóm thành công: ${response.statusCode}");
       return response.statusCode == 200 || response.statusCode == 201;
     } on DioException catch (e) {
       String msg = "Rời nhóm thất bại";
       if (e.response != null) {
-        debugPrint("❌ leaveGroup error: ${e.response!.statusCode} - ${e.response!.data}");
+        debugPrint(" leaveGroup error: ${e.response!.statusCode} - ${e.response!.data}");
         final data = e.response!.data;
         if (data is Map && data['message'] != null) {
-          msg = data['message']; // Ví dụ: "Bạn là nhóm trưởng, không thể rời nhóm"
+          msg = data['message']; 
         }
       } else {
-        debugPrint("❌ leaveGroup network error: $e");
+        debugPrint(" leaveGroup network error: $e");
       }
 
       return false;
     } catch (e) {
-      debugPrint("❌ leaveGroup unexpected error: $e");
+      debugPrint(" leaveGroup unexpected error: $e");
       return false;
     }
   }
@@ -822,21 +822,6 @@ static Future<List<dynamic>> searchAvailableStudents({required int planId, Strin
   } catch (e) {
     print("EXCEPTION: $e");
     return [];
-  }
-}
-
-
-static Future<void> _refreshTokenIfNeeded({bool force = false}) async {
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString('access_token');
-  if (token == null || force) {
-    // Gọi API login lại để lấy token mới (dùng tài khoản đã lưu)
-    final login = prefs.getString('username');
-    final pass = prefs.getString('password');
-    if (login != null && pass != null) {
-      // gọi hàm login có sẵn trong ApiService để làm mới token
-      await ApiService.login(login, pass);
-    }
   }
 }
 
@@ -1417,47 +1402,59 @@ static Future<bool> checkTokenValid() async {
   }
 }
 
-// CHANGE PASSWORD – HOÀN CHỈNH 100% (đã test thực tế)
-static Future<bool> changePassword({
+static Future<Map<String, dynamic>> changePassword({
   required String currentPassword,
-  required String newPassword,
+ required String newPassword,
+ required String confirmPassword,
 }) async {
   try {
     await _ensureAuth();
 
     final response = await dio.put(
-      '/user/change-password',
+      '/user/change-password',  
       data: {
         'current_password': currentPassword.trim(),
-        'password': newPassword.trim(),
-        'password_confirmation': newPassword.trim(), 
+        'new_password': newPassword.trim(),
+        'new_password_confirmation': confirmPassword.trim(),
       },
     );
+
     if (response.statusCode == 200 || response.statusCode == 204) {
-      debugPrint("Đổi mật khẩu THÀNH CÔNG!");
-      return true;
+      return {"success": true, "message": "Đổi mật khẩu thành công!"};
     }
-    debugPrint("Đổi mật khẩu thất bại – Status: ${response.statusCode}");
-    return false;
+
+    return {"success": false, "message": "Đổi mật khẩu thất bại"};
   } on DioException catch (e) {
+    String msg = "Không thể đổi mật khẩu";
+
     if (e.response != null) {
-      debugPrint("Đổi mật khẩu lỗi ${e.response!.statusCode}: ${e.response!.data}");
-      if (e.response!.statusCode == 422 || e.response!.statusCode == 401 || e.response!.statusCode == 403) {
-        final errorMsg = e.response!.data['message'] ?? 
-                        e.response!.data['errors']?.values?.first?.first ?? 
-                        "Dữ liệu không hợp lệ";
-        debugPrint("Lỗi validate: $errorMsg");
+      debugPrint("Lỗi đổi mật khẩu: ${e.response?.statusCode} - ${e.response?.data}");
+
+      if (e.response?.statusCode == 422) {
+        final errors = e.response?.data['errors'] ?? {};
+        if (errors['current_password'] != null) {
+          msg = "Mật khẩu hiện tại không đúng";
+        } else if (errors['new_password'] != null) {
+          msg = errors['new_password'][0];
+        } else {
+          msg = e.response?.data['message'] ?? "Dữ liệu không hợp lệ";
+        }
+      } else if (e.response?.statusCode == 401) {
+        msg = "Phiên đăng nhập hết hạn";
+      } else {
+        msg = e.response?.data['message'] ?? msg;
       }
     } else {
-      debugPrint("Lỗi mạng khi đổi mật khẩu: $e");
+      debugPrint("Lỗi mạng: $e");
+      msg = "Không có kết nối mạng";
     }
-    return false;
+
+    return {"success": false, "message": msg};
   } catch (e) {
-    debugPrint("Lỗi không xác định khi đổi mật khẩu: $e");
-    return false;
+    debugPrint("Lỗi không xác định: $e");
+    return {"success": false, "message": "Đã xảy ra lỗi"};
   }
 }
-
 static Future<void> logout() async {
   try {
     await _ensureAuth();
